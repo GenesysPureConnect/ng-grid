@@ -2,7 +2,7 @@
 * ng-grid JavaScript Library
 * Authors: https://github.com/angular-ui/ng-grid/blob/master/README.md 
 * License: MIT (http://www.opensource.org/licenses/mit-license.php)
-* Compiled At: 02/25/2014 11:25
+* Compiled At: 03/04/2014 14:39
 ***********************************************/
 (function(window, $) {
 'use strict';
@@ -360,10 +360,19 @@ angular.module('ngGrid.services').factory('$sortService', ['$parse', function($p
         }
     };
     sortService.basicSort = function(a, b) {
-        if (a === b) {
+        if (!b && !a) {
             return 0;
         }
-        if (a < b) {
+        else if (!a) {
+            return 1;
+        }
+        else if (!b) {
+            return -1;
+        }
+        else if (a === b) {
+            return 0;
+        }
+        else if (a < b) {
             return -1;
         }
         return 1;
@@ -393,11 +402,29 @@ angular.module('ngGrid.services').factory('$sortService', ['$parse', function($p
         return numA - numB;
     };
     sortService.sortAlpha = function(a, b) {
+        if (!b && !a) {
+            return 0;
+        }
+        else if (!a) {
+            return 1;
+        }
+        else if (!b) {
+            return -1;
+        }
         var strA = a.toLowerCase(),
             strB = b.toLowerCase();
         return strA === strB ? 0 : (strA < strB ? -1 : 1);
     };
     sortService.sortDate = function(a, b) {
+        if (!b && !a) {
+            return 0;
+        }
+        else if (!a) {
+            return 1;
+        }
+        else if (!b) {
+            return -1;
+        }
         var timeA = a.getTime(),
             timeB = b.getTime();
         return timeA === timeB ? 0 : (timeA < timeB ? -1 : 1);
@@ -431,20 +458,7 @@ angular.module('ngGrid.services').factory('$sortService', ['$parse', function($p
                 sortFn = sortService.getSortFn(col, d);
                 var propA = $parse(order[indx])(itemA);
                 var propB = $parse(order[indx])(itemB);
-                if ((!propA && propA !== 0) || (!propB && propB !== 0)) {
-                    if (!propB && !propA) {
-                        tem = 0;
-                    }
-                    else if (!propA) {
-                        tem = 1;
-                    }
-                    else if (!propB) {
-                        tem = -1;
-                    }
-                }
-                else {
-                    tem = sortFn(propA, propB);
-                }
+                tem = sortFn(propA, propB);
                 indx++;
             }
             if (direction === ASC) {
