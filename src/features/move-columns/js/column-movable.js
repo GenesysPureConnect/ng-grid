@@ -308,6 +308,9 @@
                     elmCloned = false;
                   }
                   
+                  moveColumnPosition(true);
+                  $elm.parent().removeClass('columnsMoving');
+                  angular.element('.ui-grid-header-canvas').removeClass('headerColumnsAreMoving');
                   offAllEvents();
                   onDownEvents();
 
@@ -325,8 +328,6 @@
                       break;
                     }
                   }
-
-                  moveColumnPosition(true);
                 };
                 
                 var onDownEvents = function(){
@@ -356,6 +357,8 @@
                   $elm.parent().append(movingElm);
 
                   //Left of cloned element should be aligned to original header cell.
+                  angular.element('.ui-grid-header-canvas').addClass('headerColumnsAreMoving');
+                  $elm.parent().addClass('columnsMoving');
                   movingElm.addClass('movingColumn');
                   var movingElementStyles = {};
                   var elmLeft;
