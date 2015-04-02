@@ -1,6 +1,8 @@
 (function(){
   'use strict';
 
+  // TODO: rename this file to ui-grid-pinned-container.js
+
   angular.module('ui.grid').directive('uiGridPinnedContainer', ['gridUtil', function (gridUtil) {
     return {
       restrict: 'EA',
@@ -30,18 +32,16 @@
                   width += col.drawnWidth || col.width || 0;
                 }
 
-                myWidth = width;
+                return width;
               }              
             }
             
             function updateContainerDimensions() {
-              // gridUtil.logDebug('update ' + $scope.side + ' dimensions');
-
               var ret = '';
               
               // Column containers
               if ($scope.side === 'left' || $scope.side === 'right') {
-                updateContainerWidth();
+                myWidth = updateContainerWidth();
 
                 // gridUtil.logDebug('myWidth', myWidth);
 
@@ -49,7 +49,7 @@
                 $elm.attr('style', null);
 
                 var myHeight = grid.renderContainers.body.getViewportHeight(); // + grid.horizontalScrollbarHeight;
-
+                
                 ret += '.grid' + grid.id + ' .ui-grid-pinned-container-' + $scope.side + ', .grid' + grid.id + ' .ui-grid-pinned-container-' + $scope.side + ' .ui-grid-render-container-' + $scope.side + ' .ui-grid-viewport { width: ' + myWidth + 'px; height: ' + myHeight + 'px; } ';
               }
 
@@ -57,9 +57,8 @@
             }
 
             grid.renderContainers.body.registerViewportAdjuster(function (adjustment) {
-              if ( myWidth === 0 || !myWidth ){
-                updateContainerWidth();
-              }
+              myWidth = updateContainerWidth();
+
               // Subtract our own width
               adjustment.width -= myWidth;
 

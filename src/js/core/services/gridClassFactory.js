@@ -49,8 +49,8 @@
           // Reset all rows to visible initially
           grid.registerRowsProcessor(function allRowsVisible(rows) {
             rows.forEach(function (row) {
-              row.visible = !row.forceInvisible;
-            });
+              row.visible = true;
+            }, 50);
 
             return rows;
           });
@@ -74,17 +74,14 @@
           });
 
 
-
-          if (grid.options.enableFiltering) {
-            grid.registerRowsProcessor(grid.searchRows);
-          }
+          grid.registerRowsProcessor(grid.searchRows, 100);
 
           // Register the default row processor, it sorts rows by selected columns
           if (grid.options.externalSort && angular.isFunction(grid.options.externalSort)) {
-            grid.registerRowsProcessor(grid.options.externalSort);
+            grid.registerRowsProcessor(grid.options.externalSort, 200);
           }
           else {
-            grid.registerRowsProcessor(grid.sortByColumn);
+            grid.registerRowsProcessor(grid.sortByColumn, 200);
           }
 
           return grid;

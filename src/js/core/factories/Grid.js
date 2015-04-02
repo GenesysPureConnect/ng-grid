@@ -1,8 +1,8 @@
 (function(){
 
 angular.module('ui.grid')
-.factory('Grid', ['$q', '$compile', '$parse', 'gridUtil', 'uiGridConstants', 'GridOptions', 'GridColumn', 'GridRow', 'GridApi', 'rowSorter', 'rowSearcher', 'GridRenderContainer', '$timeout',
-    function($q, $compile, $parse, gridUtil, uiGridConstants, GridOptions, GridColumn, GridRow, GridApi, rowSorter, rowSearcher, GridRenderContainer, $timeout) {
+.factory('Grid', ['$q', '$compile', '$parse', 'gridUtil', 'uiGridConstants', 'GridOptions', 'GridColumn', 'GridRow', 'GridApi', 'rowSorter', 'rowSearcher', 'GridRenderContainer', '$timeout','ScrollEvent',
+    function($q, $compile, $parse, gridUtil, uiGridConstants, GridOptions, GridColumn, GridRow, GridApi, rowSorter, rowSearcher, GridRenderContainer, $timeout, ScrollEvent) {
 
   /**
    * @ngdoc object
@@ -49,7 +49,22 @@ angular.module('ui.grid')
     self.headerHeight = self.options.headerRowHeight;
 
 
+    /**
+     * @ngdoc object
+     * @name footerHeight
+     * @propertyOf ui.grid.class:Grid
+     * @description returns the total footer height gridFooter + columnFooter
+     */
     self.footerHeight = self.calcFooterHeight();
+
+
+    /**
+     * @ngdoc object
+     * @name columnFooterHeight
+     * @propertyOf ui.grid.class:Grid
+     * @description returns the total column footer height
+     */
+    self.columnFooterHeight = self.calcColumnFooterHeight();
 
     self.rtl = false;
     self.gridHeight = 0;
@@ -62,7 +77,9 @@ angular.module('ui.grid')
     self.viewportAdjusters = [];
     self.rowHeaderColumns = [];
     self.dataChangeCallbacks = {};
-  
+    self.verticalScrollSyncCallBackFns = {};
+    self.horizontalScrollSyncCallBackFns = {};
+
     // self.visibleRowCache = [];
   
     // Set of 'render' containers for self grid, which can render sets of rows
@@ -109,16 +126,24 @@ angular.module('ui.grid')
      */
     self.scrollDirection = uiGridConstants.scrollDirection.NONE;
 
-    var debouncedVertical = gridUtil.debounce(function () {
+    function vertical (scrollEvent) {
       self.isScrollingVertically = false;
+      self.api.core.raise.scrollEnd(scrollEvent);
       self.scrollDirection = uiGridConstants.scrollDirection.NONE;
-    }, 1000);
-  
-    var debouncedHorizontal = gridUtil.debounce(function () {
+    }
+
+    var debouncedVertical = gridUtil.debounce(vertical, self.options.scrollDebounce);
+    var debouncedVerticalMinDelay = gridUtil.debounce(vertical, 0);
+
+    function horizontal (scrollEvent) {
       self.isScrollingHorizontally = false;
+      self.api.core.raise.scrollEnd(scrollEvent);
       self.scrollDirection = uiGridConstants.scrollDirection.NONE;
-    }, 1000);
-  
+    }
+
+    var debouncedHorizontal = gridUtil.debounce(horizontal, self.options.scrollDebounce);
+    var debouncedHorizontalMinDelay = gridUtil.debounce(horizontal, 0);
+
   
     /**
      * @ngdoc function
@@ -126,9 +151,17 @@ angular.module('ui.grid')
      * @methodOf ui.grid.class:Grid
      * @description sets isScrollingVertically to true and sets it to false in a debounced function
      */
-    self.flagScrollingVertically = function() {
+    self.flagScrollingVertically = function(scrollEvent) {
+      if (!self.isScrollingVertically && !self.isScrollingHorizontally) {
+        self.api.core.raise.scrollBegin(scrollEvent);
+      }
       self.isScrollingVertically = true;
-      debouncedVertical();
+      if (self.options.scrollDebounce === 0 || !scrollEvent.withDelay) {
+        debouncedVerticalMinDelay(scrollEvent);
+      }
+      else {
+        debouncedVertical(scrollEvent);
+      }
     };
   
     /**
@@ -137,9 +170,17 @@ angular.module('ui.grid')
      * @methodOf ui.grid.class:Grid
      * @description sets isScrollingHorizontally to true and sets it to false in a debounced function
      */
-    self.flagScrollingHorizontally = function() {
+    self.flagScrollingHorizontally = function(scrollEvent) {
+      if (!self.isScrollingVertically && !self.isScrollingHorizontally) {
+        self.api.core.raise.scrollBegin(scrollEvent);
+      }
       self.isScrollingHorizontally = true;
-      debouncedHorizontal();
+      if (self.options.scrollDebounce === 0 || !scrollEvent.withDelay) {
+        debouncedHorizontalMinDelay(scrollEvent);
+      }
+      else {
+        debouncedHorizontal(scrollEvent);
+      }
     };
 
     self.scrollbarHeight = 0;
@@ -161,19 +202,52 @@ angular.module('ui.grid')
      * @name refresh
      * @methodOf ui.grid.core.api:PublicApi
      * @description Refresh the rendered grid on screen.
+     * The refresh method re-runs both the columnProcessors and the
+     * rowProcessors, as well as calling refreshCanvas to update all
+     * the grid sizing.  In general you should prefer to use queueGridRefresh
+     * instead, which is basically a debounced version of refresh.
+     * 
+     * If you only want to resize the grid, not regenerate all the rows
+     * and columns, you should consider directly calling refreshCanvas instead.
      * 
      */
     self.api.registerMethod( 'core', 'refresh', this.refresh );
   
     /**
      * @ngdoc function
+     * @name queueGridRefresh
+     * @methodOf ui.grid.core.api:PublicApi
+     * @description Request a refresh of the rendered grid on screen, if multiple
+     * calls to queueGridRefresh are made within a digest cycle only one will execute.
+     * The refresh method re-runs both the columnProcessors and the
+     * rowProcessors, as well as calling refreshCanvas to update all
+     * the grid sizing.  In general you should prefer to use queueGridRefresh
+     * instead, which is basically a debounced version of refresh.
+     * 
+     */
+    self.api.registerMethod( 'core', 'queueGridRefresh', this.queueGridRefresh );
+  
+    /**
+     * @ngdoc function
      * @name refreshRows
      * @methodOf ui.grid.core.api:PublicApi
-     * @description Refresh the rendered grid on screen?  Note: not functional at present
+     * @description Runs only the rowProcessors, columns remain as they were.
+     * It then calls redrawInPlace and refreshCanvas, which adjust the grid sizing.
      * @returns {promise} promise that is resolved when render completes?
      * 
      */
     self.api.registerMethod( 'core', 'refreshRows', this.refreshRows );
+  
+    /**
+     * @ngdoc function
+     * @name queueRefresh
+     * @methodOf ui.grid.core.api:PublicApi
+     * @description Requests execution of refreshCanvas, if multiple requests are made
+     * during a digest cycle only one will run.  RefreshCanvas updates the grid sizing.
+     * @returns {promise} promise that is resolved when render completes?
+     * 
+     */
+    self.api.registerMethod( 'core', 'refreshRows', this.queueRefresh );
   
     /**
      * @ngdoc function
@@ -197,8 +271,54 @@ angular.module('ui.grid')
      * 
      */
     self.api.registerMethod( 'core', 'addRowHeaderColumn', this.addRowHeaderColumn );
-  
-  
+
+    /**
+     * @ngdoc function
+     * @name scrollToIfNecessary
+     * @methodOf ui.grid.core.api:PublicApi
+     * @description Scrolls the grid to make a certain row and column combo visible,
+     *   in the case that it is not completely visible on the screen already.
+     * @param {GridRow} gridRow row to make visible
+     * @param {GridCol} gridCol column to make visible
+     * @returns {promise} a promise that is resolved when scrolling is complete
+     *
+     */
+    self.api.registerMethod( 'core', 'scrollToIfNecessary', function(gridRow, gridCol) { return self.scrollToIfNecessary(gridRow, gridCol);} );
+
+    /**
+     * @ngdoc function
+     * @name scrollTo
+     * @methodOf ui.grid.core.api:PublicApi
+     * @description Scroll the grid such that the specified
+     * row and column is in view
+     * @param {object} rowEntity gridOptions.data[] array instance to make visible
+     * @param {object} colDef to make visible
+     * @returns {promise} a promise that is resolved after any scrolling is finished
+     */
+    self.api.registerMethod( 'core', 'scrollTo', function (rowEntity, colDef) { return self.scrollTo(rowEntity, colDef);}  );
+
+    /**
+     * @ngdoc function
+     * @name registerRowsProcessor
+     * @methodOf ui.grid.core.api:PublicApi
+     * @description
+     * Register a "rows processor" function. When the rows are updated,
+     * the grid calls each registered "rows processor", which has a chance
+     * to alter the set of rows (sorting, etc) as long as the count is not
+     * modified.
+     * 
+     * @param {function(renderedRowsToProcess, columns )} processorFunction rows processor function, which 
+     * is run in the context of the grid (i.e. this for the function will be the grid), and must
+     * return the updated rows list, which is passed to the next processor in the chain
+     * @param {number} priority the priority of this processor.  In general we try to do them in 100s to leave room
+     * for other people to inject rows processors at intermediate priorities.  Lower priority rowsProcessors run earlier.
+     * 
+     * At present allRowsVisible is running at 50, filter is running at 100, sort is at 200, grouping at 400, selectable rows at 500, pagination at 900 (pagination will generally want to be last)
+     */
+    self.api.registerMethod( 'core', 'registerRowsProcessor', this.registerRowsProcessor  );
+
+
+
     /**
      * @ngdoc function
      * @name sortHandleNulls
@@ -297,6 +417,14 @@ angular.module('ui.grid')
        height += this.options.gridFooterHeight;
      }
 
+     height += this.calcColumnFooterHeight();
+
+     return height;
+   };
+
+   Grid.prototype.calcColumnFooterHeight = function () {
+     var height = 0;
+
      if (this.options.showColumnFooter) {
        height += this.options.columnFooterHeight;
      }
@@ -331,7 +459,7 @@ angular.module('ui.grid')
    * @methodOf ui.grid.class:Grid
    * @description When the build creates columns from column definitions, the columnbuilders will be called to add
    * additional properties to the column.
-   * @param {function(colDef, col, gridOptions)} columnsProcessor function to be called
+   * @param {function(colDef, col, gridOptions)} columnBuilder function to be called
    */
   Grid.prototype.registerColumnBuilder = function registerColumnBuilder(columnBuilder) {
     this.columnBuilders.push(columnBuilder);
@@ -466,7 +594,7 @@ angular.module('ui.grid')
    */
   Grid.prototype.columnRefreshCallback = function columnRefreshCallback( grid ){
     grid.buildColumns();
-    grid.refresh();
+    grid.queueGridRefresh();
   };
 
 
@@ -480,7 +608,7 @@ angular.module('ui.grid')
    * @param {string} name column name
    */
   Grid.prototype.processRowsCallback = function processRowsCallback( grid ){
-    grid.refreshRows();
+    grid.queueGridRefresh();
   };
     
 
@@ -557,7 +685,7 @@ angular.module('ui.grid')
   Grid.prototype.addRowHeaderColumn = function addRowHeaderColumn(colDef) {
     var self = this;
     //self.createLeftContainer();
-    var rowHeaderCol = new GridColumn(colDef, self.rowHeaderColumns.length, self);
+    var rowHeaderCol = new GridColumn(colDef, gridUtil.nextUid(), self);
     rowHeaderCol.isRowHeader = true;
     if (self.isRTL()) {
       self.createRightContainer();
@@ -579,7 +707,7 @@ angular.module('ui.grid')
         self.buildColumns()
           .then( function() {
             self.preCompileCellTemplates();
-            self.refresh();
+            self.queueGridRefresh();
           });
       });
   };
@@ -653,8 +781,10 @@ angular.module('ui.grid')
       // We need to allow for the "row headers" when mapping from the column defs array to the columns array
       //   If we have a row header in columns[0] and don't account for it   we'll overwrite it with the column in columnDefs[0]
 
-      // Go through all the column defs
-      for (i = 0; i < self.options.columnDefs.length; i++) {
+      // Go through all the column defs, use the shorter of columns length and colDefs.length because if a user has given two columns the same name then 
+      // columns will be shorter than columnDefs.  In this situation we'll avoid an error, but the user will still get an unexpected result
+      var len = Math.min(self.options.columnDefs.length, self.columns.length);
+      for (i = 0; i < len; i++) {
         // If the column at this index has a different name than the column at the same index in the column defs...
         if (self.columns[i + headerOffset].name !== self.options.columnDefs[i].name) {
           // Replace the one in the cache with the appropriate column
@@ -691,7 +821,13 @@ angular.module('ui.grid')
     this.columns.forEach(function (col) {
       var html = col.cellTemplate.replace(uiGridConstants.MODEL_COL_FIELD, self.getQualifiedColField(col));
       html = html.replace(uiGridConstants.COL_FIELD, 'grid.getCellValue(row, col)');
-
+      
+      if (col.cellTooltip === false){
+        html = html.replace(uiGridConstants.TOOLTIP, '');
+      } else {
+        // gridColumn will have made sure that the col either has false or a function for this value
+        html = html.replace(uiGridConstants.TOOLTIP, 'title="{{col.cellTooltip(row, col)}}"');
+      }
 
       var compiledElementFn = $compile(html);
       col.compiledElementFn = compiledElementFn;
@@ -793,8 +929,8 @@ angular.module('ui.grid')
             return 0;
           }
           else {
-            var numA = a.match(nameRE)[1];
-            var numB = b.match(nameRE)[1];
+            var numA = a.displayName.match(nameRE)[1];
+            var numB = b.displayName.match(nameRE)[1];
 
             return parseInt(numA, 10) > parseInt(numB, 10) ? 1 : -1;
           }
@@ -847,185 +983,85 @@ angular.module('ui.grid')
     return t;
   };
 
-    /**
-     * @ngdoc function
-     * @name getRow
-     * @methodOf ui.grid.class:Grid
-     * @description returns the GridRow that contains the rowEntity
-     * @param {object} rowEntity the gridOptions.data array element instance
-     */
-    Grid.prototype.getRow = function getRow(rowEntity) {
-      var self = this;
-      var rows = this.rows.filter(function (row) {
-        return self.options.rowEquality(row.entity, rowEntity);
-      });
-      return rows.length > 0 ? rows[0] : null;
-    };
+  /**
+   * @ngdoc function
+   * @name getRow
+   * @methodOf ui.grid.class:Grid
+   * @description returns the GridRow that contains the rowEntity
+   * @param {object} rowEntity the gridOptions.data array element instance
+   * @param {array} rows [optional] the rows to look in - if not provided then
+   * looks in grid.rows
+   */
+  Grid.prototype.getRow = function getRow(rowEntity, lookInRows) {
+    var self = this;
+    
+    lookInRows = typeof(lookInRows) === 'undefined' ? self.rows : lookInRows;
+    
+    var rows = lookInRows.filter(function (row) {
+      return self.options.rowEquality(row.entity, rowEntity);
+    });
+    return rows.length > 0 ? rows[0] : null;
+  };
 
 
-      /**
+  /**
    * @ngdoc function
    * @name modifyRows
    * @methodOf ui.grid.class:Grid
    * @description creates or removes GridRow objects from the newRawData array.  Calls each registered
    * rowBuilder to further process the row
    *
-   * Rows are identified using the gridOptions.rowEquality function
+   * This method aims to achieve three things:
+   * 1. the resulting rows array is in the same order as the newRawData, we'll call
+   * rowsProcessors immediately after to sort the data anyway
+   * 2. if we have row hashing available, we try to use the rowHash to find the row
+   * 3. no memory leaks - rows that are no longer in newRawData need to be garbage collected
+   * 
+   * The basic logic flow makes use of the newRawData, oldRows and oldHash, and creates
+   * the newRows and newHash
+   * 
+   * ```
+   * newRawData.forEach newEntity
+   *   if (hashing enabled)
+   *     check oldHash for newEntity
+   *   else
+   *     look for old row directly in oldRows
+   *   if !oldRowFound     // must be a new row
+   *     create newRow
+   *   append to the newRows and add to newHash
+   *   run the processors
+   * 
+   * Rows are identified using the hashKey if configured.  If not configured, then rows
+   * are identified using the gridOptions.rowEquality function
    */
   Grid.prototype.modifyRows = function modifyRows(newRawData) {
-    var self = this,
-        i,
-        rowhash,
-        found,
-        newRow;
-    if ((self.options.useExternalSorting || self.getColumnSorting().length === 0) && newRawData.length > 0) {
-        var oldRowHash = self.rowHashMap;
-        if (!oldRowHash) {
-           oldRowHash = {get: function(){return null;}};
-        }
-        self.createRowHashMap();
-        rowhash = self.rowHashMap;
-        var wasEmpty = self.rows.length === 0;
-        self.rows.length = 0;
-        for (i = 0; i < newRawData.length; i++) {
-            var newRawRow = newRawData[i];
-            found = oldRowHash.get(newRawRow);
-            if (found) {
-              newRow = found.row; 
-            }
-            else {
-              newRow = self.processRowBuilders(new GridRow(newRawRow, i, self));
-            }
-            self.rows.push(newRow);
-            rowhash.put(newRawRow, {
-                i: i,
-                entity: newRawRow,
-                row:newRow
-            });
-        }
-        //now that we have data, it is save to assign types to colDefs
-//        if (wasEmpty) {
-           self.assignTypes();
-//        }
-    } else {
-    if (self.rows.length === 0 && newRawData.length > 0) {
-      if (self.options.enableRowHashing) {
-        if (!self.rowHashMap) {
-          self.createRowHashMap();
-        }
-
-        for (i = 0; i < newRawData.length; i++) {
-          newRow = newRawData[i];
-
-          self.rowHashMap.put(newRow, {
-            i: i,
-            entity: newRow
-          });
-        }
-      }
-
-      self.addRows(newRawData);
-      //now that we have data, it is save to assign types to colDefs
-      self.assignTypes();
-    }
-    else if (newRawData.length > 0) {
-      var unfoundNewRows, unfoundOldRows, unfoundNewRowsToFind;
-
-      // If row hashing is turned on
-      if (self.options.enableRowHashing) {
-        // Array of new rows that haven't been found in the old rowset
-        unfoundNewRows = [];
-        // Array of new rows that we explicitly HAVE to search for manually in the old row set. They cannot be looked up by their identity (because it doesn't exist).
-        unfoundNewRowsToFind = [];
-        // Map of rows that have been found in the new rowset
-        var foundOldRows = {};
-        // Array of old rows that have NOT been found in the new rowset
-        unfoundOldRows = [];
-
-        // Create the row HashMap if it doesn't exist already
-        if (!self.rowHashMap) {
-          self.createRowHashMap();
-        }
-        rowhash = self.rowHashMap;
-        
-        // Make sure every new row has a hash
-        for (i = 0; i < newRawData.length; i++) {
-          newRow = newRawData[i];
-
-          // Flag this row as needing to be manually found if it didn't come in with a $$hashKey
-          var mustFind = false;
-          if (!self.options.getRowIdentity(newRow)) {
-            mustFind = true;
-          }
-
-          // See if the new row is already in the rowhash
-          found = rowhash.get(newRow);
-          // If so...
-          if (found) {
-            // See if it's already being used by as GridRow
-            if (found.row) {
-              // If so, mark this new row as being found
-              foundOldRows[self.options.rowIdentity(newRow)] = true;
-            }
-          }
-          else {
-            // Put the row in the hashmap with the index it corresponds to
-            rowhash.put(newRow, {
-              i: i,
-              entity: newRow
-            });
-            
-            // This row has to be searched for manually in the old row set
-            if (mustFind) {
-              unfoundNewRowsToFind.push(newRow);
-            }
-            else {
-              unfoundNewRows.push(newRow);
-            }
-          }
-        }
-
-        // Build the list of unfound old rows
-        for (i = 0; i < self.rows.length; i++) {
-          var row = self.rows[i];
-          var hash = self.options.rowIdentity(row.entity);
-          if (!foundOldRows[hash]) {
-            unfoundOldRows.push(row);
-          }
-        }
-      }
-
-      // Look for new rows
-      var newRows = unfoundNewRows || [];
-
-      // The unfound new rows is either `unfoundNewRowsToFind`, if row hashing is turned on, or straight `newRawData` if it isn't
-      var unfoundNew = (unfoundNewRowsToFind || newRawData);
-
-      // Search for real new rows in `unfoundNew` and concat them onto `newRows`
-      newRows = newRows.concat(self.newInN(self.rows, unfoundNew, 'entity'));
-      
-      self.addRows(newRows); 
-      
-      var deletedRows = self.getDeletedRows((unfoundOldRows || self.rows), newRawData);
-
-      for (i = 0; i < deletedRows.length; i++) {
-        if (self.options.enableRowHashing) {
-          self.rowHashMap.remove(deletedRows[i].entity);
-        }
-
-        self.rows.splice( self.rows.indexOf(deletedRows[i]), 1 );
-      }
-    }
-    // Empty data set
-    else {
-      // Reset the row HashMap
-      self.createRowHashMap();
-
-      // Reset the rows length!
-      self.rows.length = 0;
-    }
-    }
+    var self = this;
+    var oldRows = self.rows.slice(0);
+    var oldRowHash = self.rowHashMap || self.createRowHashMap();
+    self.rowHashMap = self.createRowHashMap();
+    self.rows.length = 0;
     
+    newRawData.forEach( function( newEntity, i ) {
+      var newRow;
+      if ( self.options.enableRowHashing ){
+        // if hashing is enabled, then this row will be in the hash if we already know about it
+        newRow = oldRowHash.get( newEntity );
+      } else {
+        // otherwise, manually search the oldRows to see if we can find this row
+        newRow = self.getRow(newEntity, oldRows);
+      }
+
+      // if we didn't find the row, it must be new, so create it
+      if ( !newRow ){
+        newRow = self.processRowBuilders(new GridRow(newEntity, i, self));
+      }
+
+      self.rows.push( newRow );
+      self.rowHashMap.put( newEntity, newRow );
+    });
+    
+    self.assignTypes();
+
     var p1 = $q.when(self.processRowsProcessors(self.rows))
       .then(function (renderableRows) {
         return self.setVisibleRows(renderableRows);
@@ -1039,18 +1075,6 @@ angular.module('ui.grid')
     return $q.all([p1, p2]);
   };
 
-  Grid.prototype.getDeletedRows = function(oldRows, newRows) {
-    var self = this;
-
-    var olds = oldRows.filter(function (oldRow) {
-      return !newRows.some(function (newItem) {
-        return self.options.rowEquality(newItem, oldRow.entity);
-      });
-    });
-    // var olds = self.newInN(newRows, oldRows, null, 'entity');
-    // dump('olds', olds);
-    return olds;
-  };
 
   /**
    * Private Undocumented Method
@@ -1136,21 +1160,31 @@ angular.module('ui.grid')
    * @ngdoc function
    * @name registerRowsProcessor
    * @methodOf ui.grid.class:Grid
-   * @param {function(renderableRows)} rows processor function
-   * @returns {Array[GridRow]} Updated renderable rows
    * @description
-
-     Register a "rows processor" function. When the rows are updated,
-     the grid calls each registered "rows processor", which has a chance
-     to alter the set of rows (sorting, etc) as long as the count is not
-     modified.
+   *
+   * Register a "rows processor" function. When the rows are updated,
+   * the grid calls each registered "rows processor", which has a chance
+   * to alter the set of rows (sorting, etc) as long as the count is not
+   * modified.
+   * 
+   * @param {function(renderedRowsToProcess, columns )} processorFunction rows processor function, which 
+   * is run in the context of the grid (i.e. this for the function will be the grid), and must
+   * return the updated rows list, which is passed to the next processor in the chain
+   * @param {number} priority the priority of this processor.  In general we try to do them in 100s to leave room
+   * for other people to inject rows processors at intermediate priorities.  Lower priority rowsProcessors run earlier.
+   * 
+   * At present all rows visible is running at 50, filter is running at 100, sort is at 200, grouping at 400, selectable rows at 500, pagination at 900 (pagination will generally want to be last)
+   * 
    */
-  Grid.prototype.registerRowsProcessor = function registerRowsProcessor(processor) {
+  Grid.prototype.registerRowsProcessor = function registerRowsProcessor(processor, priority) {
     if (!angular.isFunction(processor)) {
       throw 'Attempt to register non-function rows processor: ' + processor;
     }
 
-    this.rowsProcessors.push(processor);
+    this.rowsProcessors.push({processor: processor, priority: priority});
+    this.rowsProcessors.sort(function sortByPriority( a, b ){
+      return a.priority - b.priority;
+    });
   };
 
   /**
@@ -1161,9 +1195,14 @@ angular.module('ui.grid')
    * @description Remove a registered rows processor
    */
   Grid.prototype.removeRowsProcessor = function removeRowsProcessor(processor) {
-    var idx = this.rowsProcessors.indexOf(processor);
+    var idx = -1;
+    this.rowsProcessors.forEach(function(rowsProcessor, index){
+      if ( rowsProcessor.processor === processor ){
+        idx = index;
+      }
+    });
 
-    if (typeof(idx) !== 'undefined' && idx !== undefined) {
+    if ( idx !== -1 ) {
       this.rowsProcessors.splice(idx, 1);
     }
   };
@@ -1182,20 +1221,6 @@ angular.module('ui.grid')
     // Create a shallow copy of the rows so that we can safely sort them without altering the original grid.rows sort order
     var myRenderableRows = renderableRows.slice(0);
     
-    // self.rowsProcessors.forEach(function (processor) {
-    //   myRenderableRows = processor.call(self, myRenderableRows, self.columns);
-
-    //   if (!renderableRows) {
-    //     throw "Processor at index " + i + " did not return a set of renderable rows";
-    //   }
-
-    //   if (!angular.isArray(renderableRows)) {
-    //     throw "Processor at index " + i + " did not return an array";
-    //   }
-
-    //   i++;
-    // });
-
     // Return myRenderableRows with no processing if we have no rows processors 
     if (self.rowsProcessors.length === 0) {
       return $q.when(myRenderableRows);
@@ -1215,7 +1240,7 @@ angular.module('ui.grid')
     //   the result.
     function startProcessor(i, renderedRowsToProcess) {
       // Get the processor at 'i'
-      var processor = self.rowsProcessors[i];
+      var processor = self.rowsProcessors[i].processor;
 
       // Call the processor, passing in the rows to process and the current columns
       //   (note: it's wrapped in $q.when() in case the processor does not return a promise)
@@ -1251,11 +1276,10 @@ angular.module('ui.grid')
   };
 
   Grid.prototype.setVisibleRows = function setVisibleRows(rows) {
-    // gridUtil.logDebug('setVisibleRows');
-
+    // this is also setting processedRows, providing a cache of the rows as they
+    // came out of the rowProcessors - in particular they are sorted so we
+    // can process them for grouping
     var self = this;
-
-    //var newVisibleRowCache = [];
 
     // Reset all the render container row caches
     for (var i in self.renderContainers) {
@@ -1274,18 +1298,11 @@ angular.module('ui.grid')
     for (var ri = 0; ri < rows.length; ri++) {
       var row = rows[ri];
 
+      var targetContainer = (typeof(row.renderContainer) !== 'undefined' && row.renderContainer) ? row.renderContainer : 'body';
+
       // If the row is visible
       if (row.visible) {
-        // newVisibleRowCache.push(row);
-
-        // If the row has a container specified
-        if (typeof(row.renderContainer) !== 'undefined' && row.renderContainer) {
-          self.renderContainers[row.renderContainer].visibleRowCache.push(row);
-        }
-        // If not, put it into the body container
-        else {
-          self.renderContainers.body.visibleRowCache.push(row);
-        }
+        self.renderContainers[targetContainer].visibleRowCache.push(row);
       }
     }
     self.api.core.raise.rowsRendered(this.api);
@@ -1295,8 +1312,10 @@ angular.module('ui.grid')
    * @ngdoc function
    * @name registerColumnsProcessor
    * @methodOf ui.grid.class:Grid
-   * @param {function(renderableColumns)} rows processor function
-   * @returns {Array[GridColumn]} Updated renderable columns
+   * @param {function(renderedColumnsToProcess, rows)} columnProcessor column processor function, which
+   * is run in the context of the grid (i.e. this for the function will be the grid), and
+   * which must return an updated renderedColumnsToProcess which can be passed to the next processor 
+   * in the chain
    * @description
 
      Register a "columns processor" function. When the columns are updated,
@@ -1427,7 +1446,7 @@ angular.module('ui.grid')
    * @ngdoc function
    * @name queueRefresh
    * @methodOf ui.grid.class:Grid
-   * @description todo: @c0bra can you document this method?
+   * @description queues a grid refreshCanvas, a way of debouncing all the refreshes we might otherwise issue
    */
   Grid.prototype.queueRefresh = function queueRefresh() {
     var self = this;
@@ -1446,6 +1465,32 @@ angular.module('ui.grid')
 
     return self.refreshCanceller;
   };
+
+
+  /**
+   * @ngdoc function
+   * @name queueGridRefresh
+   * @methodOf ui.grid.class:Grid
+   * @description queues a grid refresh, a way of debouncing all the refreshes we might otherwise issue
+   */
+  Grid.prototype.queueGridRefresh = function queueGridRefresh() {
+    var self = this;
+
+    if (self.gridRefreshCanceller) {
+      $timeout.cancel(self.gridRefreshCanceller);
+    }
+
+    self.gridRefreshCanceller = $timeout(function () {
+      self.refresh(true);
+    });
+
+    self.gridRefreshCanceller.then(function () {
+      self.gridRefreshCanceller = null;
+    });
+
+    return self.gridRefreshCanceller;
+  };
+
 
   /**
    * @ngdoc function
@@ -1583,6 +1628,67 @@ angular.module('ui.grid')
     return viewPortWidth;
   };
 
+  Grid.prototype.addVerticalScrollSync = function (containerId, callBackFn) {
+    this.verticalScrollSyncCallBackFns[containerId] = callBackFn;
+  };
+
+  Grid.prototype.addHorizontalScrollSync = function (containerId, callBackFn) {
+    this.horizontalScrollSyncCallBackFns[containerId] = callBackFn;
+  };
+
+/**
+ * Scroll needed containers by calling their ScrollSyncs
+ * @param sourceContainerId the containerId that has already set it's top/left.
+ *         can be empty string which means all containers need to set top/left
+ * @param scrollEvent
+ */
+  Grid.prototype.scrollContainers = function (sourceContainerId, scrollEvent) {
+
+    if (scrollEvent.y) {
+      //default for no container Id (ex. mousewheel means that all containers must set scrollTop/Left)
+      var verts = ['body','left', 'right'];
+
+      this.flagScrollingVertically(scrollEvent);
+
+      if (sourceContainerId === 'body') {
+        verts = ['left', 'right'];
+      }
+      else if (sourceContainerId === 'left') {
+        verts = ['body', 'right'];
+      }
+      else if (sourceContainerId === 'right') {
+        verts = ['body', 'left'];
+      }
+
+      for (var i = 0; i < verts.length; i++) {
+        var id = verts[i];
+        if (this.verticalScrollSyncCallBackFns[id]) {
+          this.verticalScrollSyncCallBackFns[id](scrollEvent);
+        }
+      }
+
+    }
+
+    if (scrollEvent.x) {
+      //default for no container Id (ex. mousewheel means that all containers must set scrollTop/Left)
+      var horizs = ['body','bodyheader', 'bodyfooter'];
+
+      this.flagScrollingHorizontally(scrollEvent);
+      if (sourceContainerId === 'body') {
+        horizs = ['bodyheader', 'bodyfooter'];
+      }
+
+      for (var j = 0; j < horizs.length; j++) {
+        var idh = horizs[j];
+        if (this.horizontalScrollSyncCallBackFns[idh]) {
+          this.horizontalScrollSyncCallBackFns[idh](scrollEvent);
+        }
+      }
+
+    }
+
+  };
+
   Grid.prototype.registerViewportAdjuster = function registerViewportAdjuster(func) {
     this.viewportAdjusters.push(func);
   };
@@ -1655,13 +1761,15 @@ angular.module('ui.grid')
    * @param {GridColumn} col Column to access
    */
   Grid.prototype.getCellValue = function getCellValue(row, col){
-    var self = this;
-
-    if (!self.cellValueGetterCache[col.colDef.name]) {
-      self.cellValueGetterCache[col.colDef.name] = $parse(row.getEntityQualifiedColField(col));
+    if (this.options.flatEntityAccess && col.field){
+      return row.entity[col.field];      
+    } else {
+      if (!col.cellValueGetterCache) {
+        col.cellValueGetterCache = $parse(row.getEntityQualifiedColField(col));
+      }
+  
+      return col.cellValueGetterCache(row);
     }
-
-    return self.cellValueGetterCache[col.colDef.name](row);
   };
 
   
@@ -1689,7 +1797,7 @@ angular.module('ui.grid')
     var self = this;
 
     self.columns.forEach(function (col) {
-      if (col !== excludeCol && !col.colDef.suppressRemoveSort) {
+      if (col !== excludeCol && !col.suppressRemoveSort) {
         col.sort = {};
       }
     });
@@ -1754,8 +1862,10 @@ angular.module('ui.grid')
     if (!add) {
       self.resetColumnSorting(column);
       column.sort.priority = 0;
+      // Get the actual priority since there may be columns which have suppressRemoveSort set
+      column.sort.priority = self.getNextColumnSortPriority();
     }
-    else {
+    else if (!column.sort.priority){
       column.sort.priority = self.getNextColumnSortPriority();
     }
 
@@ -1765,10 +1875,10 @@ angular.module('ui.grid')
         column.sort.direction = uiGridConstants.DESC;
       }
       else if (column.sort.direction && column.sort.direction === uiGridConstants.DESC) {
-        if ( column.colDef && column.colDef.suppressRemoveSort ){
+        if ( column.colDef && column.suppressRemoveSort ){
           column.sort.direction = uiGridConstants.ASC;
         } else {
-          column.sort.direction = null;
+          column.sort = {};
         }
       }
       else {
@@ -1800,7 +1910,7 @@ angular.module('ui.grid')
     var hashMap = new RowHashMap();
     hashMap.grid = self;
 
-    self.rowHashMap = hashMap;
+    return hashMap;
   };
   
   
@@ -1809,11 +1919,9 @@ angular.module('ui.grid')
    * @name refresh
    * @methodOf ui.grid.class:Grid
    * @description Refresh the rendered grid on screen.
-   * 
+   * @params {boolean} [rowsAltered] Optional flag for refreshing when the number of rows has changed.
    */
-  Grid.prototype.refresh = function refresh() {
-    // gridUtil.logDebug('grid refresh');
-    
+  Grid.prototype.refresh = function refresh(rowsAltered) {
     var self = this;
     
     var p1 = self.processRowsProcessors(self.rows).then(function (renderableRows) {
@@ -1825,11 +1933,11 @@ angular.module('ui.grid')
     });
 
     return $q.all([p1, p2]).then(function () {
-      self.redrawInPlace();
+      self.redrawInPlace(rowsAltered);
 
       self.refreshCanvas(true);
     });
-  };  
+  };
   
   /**
    * @ngdoc function
@@ -1854,9 +1962,9 @@ angular.module('ui.grid')
 
   /**
    * @ngdoc function
-   * @name redrawCanvas
+   * @name refreshCanvas
    * @methodOf ui.grid.class:Grid
-   * @description TBD
+   * @description Builds all styles and recalculates much of the grid sizing
    * @params {object} buildStyles optional parameter.  Use TBD
    * @returns {promise} promise that is resolved when the canvas
    * has been refreshed
@@ -1922,9 +2030,7 @@ angular.module('ui.grid')
 
           if (container.header) {
             var oldHeaderHeight = container.headerHeight;
-            var headerHeight = gridUtil.outerElementHeight(container.header);
-
-            container.headerHeight = parseInt(headerHeight, 10);
+            var headerHeight = container.headerHeight = parseInt(gridUtil.outerElementHeight(container.header), 10);
 
             if (oldHeaderHeight !== headerHeight) {
               rebuildStyles = true;
@@ -1939,24 +2045,24 @@ angular.module('ui.grid')
 
             container.innerHeaderHeight = innerHeaderHeight;
 
-            // Save the largest header height for use later
-            if (innerHeaderHeight > maxHeaderHeight) {
+            // If the header doesn't have an explicit height set, save the largest header height for use later
+            //   Explicit header heights are based off of the max we are calculating here. We never want to base the max on something we're setting explicitly
+            if (!container.explicitHeaderHeight && innerHeaderHeight > maxHeaderHeight) {
               maxHeaderHeight = innerHeaderHeight;
             }
           }
 
           if (container.headerCanvas) {
             var oldHeaderCanvasHeight = container.headerCanvasHeight;
-            var headerCanvasHeight = gridUtil.outerElementHeight(container.headerCanvas);
-
-            container.headerCanvasHeight = parseInt(headerCanvasHeight, 10);
+            var headerCanvasHeight = container.headerCanvasHeight = parseInt(gridUtil.outerElementHeight(container.headerCanvas), 10);
 
             if (oldHeaderCanvasHeight !== headerCanvasHeight) {
               rebuildStyles = true;
             }
 
-            // Save the largest header canvas height for use later
-            if (headerCanvasHeight > maxHeaderCanvasHeight) {
+            // If the header doesn't have an explicit canvas height, save the largest header canvas height for use later
+            //   Explicit header heights are based off of the max we are calculating here. We never want to base the max on something we're setting explicitly
+            if (!container.explicitHeaderCanvasHeight && headerCanvasHeight > maxHeaderCanvasHeight) {
               maxHeaderCanvasHeight = headerCanvasHeight;
             }
           }
@@ -1966,12 +2072,27 @@ angular.module('ui.grid')
         for (i = 0; i < containerHeadersToRecalc.length; i++) {
           container = containerHeadersToRecalc[i];
 
-          // If this header's height is less than another header's height, then explicitly set it so they're the same and one isn't all offset and weird looking
-          if (container.headerHeight < maxHeaderHeight) {
+          /* If:
+              1. We have a max header height
+              2. This container has a header height defined
+              3. And either this container has an explicit header height set, OR its header height is less than the max
+
+              then:
+
+              Give this container's header an explicit height so it will line up with the tallest header
+          */
+          if (
+            maxHeaderHeight > 0 && typeof(container.headerHeight) !== 'undefined' && container.headerHeight !== null &&
+            (container.explicitHeaderHeight || container.headerHeight < maxHeaderHeight)
+          ) {
             container.explicitHeaderHeight = maxHeaderHeight;
           }
 
-          if (container.headerCanvasHeight < maxHeaderCanvasHeight) {
+          // Do the same as above except for the header canvas
+          if (
+            maxHeaderCanvasHeight > 0 && typeof(container.headerCanvasHeight) !== 'undefined' && container.headerCanvasHeight !== null &&
+            (container.explicitHeaderCanvasHeight || container.headerCanvasHeight < maxHeaderCanvasHeight)
+          ) {
             container.explicitHeaderCanvasHeight = maxHeaderCanvasHeight;
           }
         }
@@ -2001,9 +2122,10 @@ angular.module('ui.grid')
    * @name redrawCanvas
    * @methodOf ui.grid.class:Grid
    * @description Redraw the rows and columns based on our current scroll position
+   * @param {boolean} [rowsAdded] Optional to indicate rows are added and the scroll percentage must be recalculated
    * 
    */
-  Grid.prototype.redrawInPlace = function redrawInPlace() {
+  Grid.prototype.redrawInPlace = function redrawInPlace(rowsAdded) {
     // gridUtil.logDebug('redrawInPlace');
     
     var self = this;
@@ -2012,9 +2134,15 @@ angular.module('ui.grid')
       var container = self.renderContainers[i];
 
       // gridUtil.logDebug('redrawing container', i);
-
-      container.adjustRows(null, container.prevScrolltopPercentage, true);
-      container.adjustColumns(null, container.prevScrollleftPercentage);
+      
+      if (rowsAdded) {
+        container.adjustRows(container.prevScrollTop, null);
+        container.adjustColumns(container.prevScrollLeft, null);
+      }
+      else {
+        container.adjustRows(null, container.prevScrolltopPercentage);
+        container.adjustColumns(null, container.prevScrollleftPercentage);
+      }
     }
   };
 
@@ -2038,10 +2166,191 @@ angular.module('ui.grid')
       return this.hasRightContainer() && this.renderContainers.right.renderedColumns.length > 0;
     };
 
+    /**
+     * @ngdoc method
+     * @methodOf  ui.grid.class:Grid
+     * @name scrollToIfNecessary
+     * @description Scrolls the grid to make a certain row and column combo visible,
+     *   in the case that it is not completely visible on the screen already.
+     * @param {GridRow} gridRow row to make visible
+     * @param {GridCol} gridCol column to make visible
+     * @returns {promise} a promise that is resolved when scrolling is complete
+     */
+    Grid.prototype.scrollToIfNecessary = function (gridRow, gridCol) {
+      var self = this;
+
+      var scrollEvent = new ScrollEvent(self, 'uiGrid.scrollToIfNecessary');
+
+      // Alias the visible row and column caches
+      var visRowCache = self.renderContainers.body.visibleRowCache;
+      var visColCache = self.renderContainers.body.visibleColumnCache;
+
+      /*-- Get the top, left, right, and bottom "scrolled" edges of the grid --*/
+
+      // The top boundary is the current Y scroll position PLUS the header height, because the header can obscure rows when the grid is scrolled downwards
+      var topBound = self.renderContainers.body.prevScrollTop + self.headerHeight;
+
+      // Don't the let top boundary be less than 0
+      topBound = (topBound < 0) ? 0 : topBound;
+
+      // The left boundary is the current X scroll position
+      var leftBound = self.renderContainers.body.prevScrollLeft;
+
+      // The bottom boundary is the current Y scroll position, plus the height of the grid, but minus the header height.
+      //   Basically this is the viewport height added on to the scroll position
+      var bottomBound = self.renderContainers.body.prevScrollTop + self.gridHeight - self.renderContainers.body.headerHeight - self.footerHeight -  self.scrollbarWidth;
+
+      // If there's a horizontal scrollbar, remove its height from the bottom boundary, otherwise we'll be letting it obscure rows
+      //if (self.horizontalScrollbarHeight) {
+      //  bottomBound = bottomBound - self.horizontalScrollbarHeight;
+      //}
+
+      // The right position is the current X scroll position minus the grid width
+      var rightBound = self.renderContainers.body.prevScrollLeft + Math.ceil(self.gridWidth);
+
+      // If there's a vertical scrollbar, subtract it from the right boundary or we'll allow it to obscure cells
+      //if (self.verticalScrollbarWidth) {
+      //  rightBound = rightBound - self.verticalScrollbarWidth;
+      //}
+
+      // We were given a row to scroll to
+      if (gridRow !== null) {
+        // This is the index of the row we want to scroll to, within the list of rows that can be visible
+        var seekRowIndex = visRowCache.indexOf(gridRow);
+
+        // Total vertical scroll length of the grid
+        var scrollLength = (self.renderContainers.body.getCanvasHeight() - self.renderContainers.body.getViewportHeight());
+
+        // Add the height of the native horizontal scrollbar to the scroll length, if it's there. Otherwise it will mask over the final row
+        //if (self.horizontalScrollbarHeight && self.horizontalScrollbarHeight > 0) {
+        //  scrollLength = scrollLength + self.horizontalScrollbarHeight;
+        //}
+
+        // This is the minimum amount of pixels we need to scroll vertical in order to see this row.
+        var pixelsToSeeRow = ((seekRowIndex + 1) * self.options.rowHeight);
+
+        // Don't let the pixels required to see the row be less than zero
+        pixelsToSeeRow = (pixelsToSeeRow < 0) ? 0 : pixelsToSeeRow;
+
+        var scrollPixels, percentage;
+
+        // If the scroll position we need to see the row is LESS than the top boundary, i.e. obscured above the top of the self...
+        if (pixelsToSeeRow < topBound) {
+          // Get the different between the top boundary and the required scroll position and subtract it from the current scroll position\
+          //   to get the full position we need
+          scrollPixels = self.renderContainers.body.prevScrollTop - (topBound - pixelsToSeeRow);
+
+          // Turn the scroll position into a percentage and make it an argument for a scroll event
+          percentage = scrollPixels / scrollLength;
+          scrollEvent.y = { percentage: percentage  };
+        }
+        // Otherwise if the scroll position we need to see the row is MORE than the bottom boundary, i.e. obscured below the bottom of the self...
+        else if (pixelsToSeeRow > bottomBound) {
+          // Get the different between the bottom boundary and the required scroll position and add it to the current scroll position
+          //   to get the full position we need
+          scrollPixels = pixelsToSeeRow - bottomBound + self.renderContainers.body.prevScrollTop;
+
+          // Turn the scroll position into a percentage and make it an argument for a scroll event
+          percentage = scrollPixels / scrollLength;
+          scrollEvent.y = { percentage: percentage  };
+        }
+      }
+
+      // We were given a column to scroll to
+      if (gridCol !== null) {
+        // This is the index of the row we want to scroll to, within the list of rows that can be visible
+        var seekColumnIndex = visColCache.indexOf(gridCol);
+
+        // Total vertical scroll length of the grid
+        var horizScrollLength = (self.renderContainers.body.getCanvasWidth() - self.renderContainers.body.getViewportWidth());
+
+        // Add the height of the native horizontal scrollbar to the scroll length, if it's there. Otherwise it will mask over the final row
+        // if (self.verticalScrollbarWidth && self.verticalScrollbarWidth > 0) {
+        //   horizScrollLength = horizScrollLength + self.verticalScrollbarWidth;
+        // }
+
+        // This is the minimum amount of pixels we need to scroll vertical in order to see this column
+        var columnLeftEdge = 0;
+        for (var i = 0; i < seekColumnIndex; i++) {
+          var col = visColCache[i];
+          columnLeftEdge += col.drawnWidth;
+        }
+        columnLeftEdge = (columnLeftEdge < 0) ? 0 : columnLeftEdge;
+
+        var columnRightEdge = columnLeftEdge + gridCol.drawnWidth;
+
+        // Don't let the pixels required to see the column be less than zero
+        columnRightEdge = (columnRightEdge < 0) ? 0 : columnRightEdge;
+
+        var horizScrollPixels, horizPercentage;
+
+        // If the scroll position we need to see the row is LESS than the top boundary, i.e. obscured above the top of the self...
+        if (columnLeftEdge < leftBound) {
+          // Get the different between the top boundary and the required scroll position and subtract it from the current scroll position\
+          //   to get the full position we need
+          horizScrollPixels = self.renderContainers.body.prevScrollLeft - (leftBound - columnLeftEdge);
+
+          // Turn the scroll position into a percentage and make it an argument for a scroll event
+          horizPercentage = horizScrollPixels / horizScrollLength;
+          horizPercentage = (horizPercentage > 1) ? 1 : horizPercentage;
+          scrollEvent.x = { percentage: horizPercentage  };
+        }
+        // Otherwise if the scroll position we need to see the row is MORE than the bottom boundary, i.e. obscured below the bottom of the self...
+        else if (columnRightEdge > rightBound) {
+          // Get the different between the bottom boundary and the required scroll position and add it to the current scroll position
+          //   to get the full position we need
+          horizScrollPixels = columnRightEdge - rightBound + self.renderContainers.body.prevScrollLeft;
+
+          // Turn the scroll position into a percentage and make it an argument for a scroll event
+          horizPercentage = horizScrollPixels / horizScrollLength;
+          horizPercentage = (horizPercentage > 1) ? 1 : horizPercentage;
+          scrollEvent.x = { percentage: horizPercentage  };
+        }
+      }
+
+      var deferred = $q.defer();
+
+      // If we need to scroll on either the x or y axes, fire a scroll event
+      if (scrollEvent.y || scrollEvent.x) {
+        scrollEvent.withDelay = false;
+        self.scrollContainers('',scrollEvent);
+        var dereg = self.api.core.on.scrollEnd(null,function() {
+          deferred.resolve(scrollEvent);
+          dereg();
+        });
+      }
+      else {
+        deferred.resolve();
+      }
+
+      return deferred.promise;
+    };
+
+    /**
+     * @ngdoc method
+     * @methodOf ui.grid.class:Grid
+     * @name scrollTo
+     * @description Scroll the grid such that the specified
+     * row and column is in view
+     * @param {object} rowEntity gridOptions.data[] array instance to make visible
+     * @param {object} colDef to make visible
+     * @returns {promise} a promise that is resolved after any scrolling is finished
+     */
+    Grid.prototype.scrollTo = function (rowEntity, colDef) {
+      var gridRow = null, gridCol = null;
+
+      if (rowEntity !== null && typeof(rowEntity) !== 'undefined' ) {
+        gridRow = this.getRow(rowEntity);
+      }
+
+      if (colDef !== null && typeof(colDef) !== 'undefined' ) {
+        gridCol = this.getColumn(colDef.name ? colDef.name : colDef.field);
+      }
+      return this.scrollToIfNecessary(gridRow, gridCol);
+    };
 
 
-
-  // Blatantly stolen from Angular as it isn't exposed (yet? 2.0?)
+      // Blatantly stolen from Angular as it isn't exposed (yet? 2.0?)
   function RowHashMap() {}
 
   RowHashMap.prototype = {
