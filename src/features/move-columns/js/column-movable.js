@@ -473,7 +473,7 @@
                   // move the column if it's in view. Else scroll if we need to
                   if (newElementLeft > $scope.colContainer.prevScrollLeft && 
                       newElementRight < scrolledGridRight && newElementRight < $scope.colContainer.canvasWidth) {
-                    movingElm.css({visibility: 'visible', 'left': newElementLeft + 'px'});
+                      movingElm.css({visibility: 'visible', 'left': newElementLeft + 'px'});
                   }
                   else if (newElementRight < $scope.colContainer.canvasWidth && newElementLeft >= gridLeft){
                     changeValue *= 8;
