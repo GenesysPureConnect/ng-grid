@@ -279,6 +279,26 @@
           };
         };
 
+        /**
+         * @ngdoc function
+         * @name unregisterEvent
+         * @methodOf ui.grid.class:GridApi
+         * @description Unregisters a existing event for the given feature.
+         * @param {string} featureName name of the feature that raises the event
+         * @param {string} eventName  name of the event
+         */
+        GridApi.prototype.unregisterEvent = function (featureName) {
+          var self = this;
+          var feature = self[featureName];
+
+          if (!feature) {
+            return;
+          }
+
+          feature.listeners = [];
+          delete self[featureName];
+        };
+
         function registerEventWithAngular(eventId, handler, grid, _this) {
           return $rootScope.$on(eventId, function (event) {
             var args = Array.prototype.slice.call(arguments);
@@ -324,6 +344,21 @@
 
         /**
          * @ngdoc function
+         * @name unregisterEventsFromObject
+         * @methodOf ui.grid.class:GridApi
+         * @description Unregisters features from a simple objectMap.
+         * @param {object} eventObjectMap map of feature/event names
+         */
+        GridApi.prototype.unregisterEventsFromObject = function (eventObjectMap) {
+          var self = this;
+
+          angular.forEach(eventObjectMap, function (featProp, featPropName) {
+            self.unregisterEvent(featPropName);
+          });
+        };
+
+        /**
+         * @ngdoc function
          * @name registerMethod
          * @methodOf ui.grid.class:GridApi
          * @description Registers a new event for the given feature
@@ -341,6 +376,24 @@
 
           feature[methodName] = gridUtil.createBoundedWrapper(_this || this.grid, callBackFn);
         };
+
+        /**
+         * @ngdoc function
+         * @name unregisterMethod
+         * @methodOf ui.grid.class:GridApi
+         * @description Unregisters an existing event for the given feature
+         * @param {string} featureName name of the feature
+         * @param {string} methodName  name of the method
+         */
+        GridApi.prototype.unregisterMethod = function (featureName, methodName) {
+          var feature = this[featureName];
+
+          if (!feature) {
+            return;
+          }
+
+          delete feature[methodName];
+        }
 
         /**
          * @ngdoc function
@@ -376,8 +429,23 @@
 
         };
 
+        /**
+         * @ngdoc function
+         * @name unregisterMethodFromObject
+         * @methodOf ui.grid.class:GridApi
+         * @description Unregisters features and methods from a simple objectMap.
+         * @param {object} eventObjectMap map of feature/event names
+         */
+         GridApi.prototype.unregisterMethodFromObject = function (methodMap) {
+           var self = this;
+           angular.forEach(methodMap, function (featProp, featPropName) {
+             angular.forEach(featProp, function(prop, propName) {
+               self.unregisterMethod(featPropName, propName);
+             });
+           });
+         };
+
         return GridApi;
 
       }]);
-
 })();
