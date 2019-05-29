@@ -249,16 +249,19 @@
             $rootScope.$emit.apply($rootScope, [eventId].concat(Array.prototype.slice.call(arguments)));
           };
 
+          var cleanup = [];
           // gridUtil.logDebug('Creating on event method ' + featureName + '.on.' + eventName);
           feature.on[eventName] = function (scope, handler, _this) {
             if ( scope !== null && typeof(scope.$on) === 'undefined' ){
               gridUtil.logError('asked to listen on ' + featureName + '.on.' + eventName + ' but scope wasn\'t passed in the input parameters.  It is legitimate to pass null, but you\'ve passed something else, so you probably forgot to provide scope rather than did it deliberately, not registering');
               return;
             }
+
             var deregAngularOn = registerEventWithAngular(eventId, handler, self.grid, _this);
 
             //track our listener so we can turn off and on
             var listener = {handler: handler, dereg: deregAngularOn, eventId: eventId, scope: scope, _this:_this};
+
             self.listeners.push(listener);
 
             var removeListener = function(){
@@ -266,6 +269,8 @@
               var index = self.listeners.indexOf(listener);
               self.listeners.splice(index,1);
             };
+
+            cleanup.push(removeListener);
 
             //destroy tracking when scope is destroyed
             if (scope) {
@@ -277,6 +282,8 @@
 
             return removeListener;
           };
+
+          feature.cleanup = cleanup;
         };
 
         /**
@@ -295,7 +302,11 @@
             return;
           }
 
-          feature.listeners = [];
+          feature.cleanup.forEach(function(removeListener) {
+            removeListener();
+          });
+
+          feature.cleanup = [];
           delete self[featureName];
         };
 
