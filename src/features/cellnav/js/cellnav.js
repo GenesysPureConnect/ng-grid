@@ -1092,6 +1092,7 @@
                 destroySteps.forEach(function (destroy) {
                   destroy();
                 });
+                destroySteps = [];
               }
 
               function toggleViewPort(state) {
@@ -1145,6 +1146,9 @@
 
             // Make this cell focusable but only with javascript/a mouse click
             $elm.attr('tabindex', -1);
+            destroySteps.push(function() {
+              $elm.removeAttribute('tabindex');
+            });
 
             // When a cell is clicked, broadcast a cellNav event saying that this row+col combo is now focused
             function clickHandler(evt) {
@@ -1258,7 +1262,6 @@
           }
 
           function tearDownFeature() {
-            $elm.removeAttribute('tabindex');
             if (dataChangeDereg) {
               dataChangeDereg();
             }
@@ -1266,6 +1269,8 @@
             destroySteps.forEach(function(destory) {
               destory();
             });
+
+            destroySteps = [];
           }
 
           function handleFeatureState(state) {
