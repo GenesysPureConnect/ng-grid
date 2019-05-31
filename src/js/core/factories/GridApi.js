@@ -249,7 +249,7 @@
             $rootScope.$emit.apply($rootScope, [eventId].concat(Array.prototype.slice.call(arguments)));
           };
 
-          var cleanup = [];
+          var destroySteps = [];
           // gridUtil.logDebug('Creating on event method ' + featureName + '.on.' + eventName);
           feature.on[eventName] = function (scope, handler, _this) {
             if ( scope !== null && typeof(scope.$on) === 'undefined' ){
@@ -270,7 +270,7 @@
               self.listeners.splice(index,1);
             };
 
-            cleanup.push(removeListener);
+            destroySteps.push(removeListener);
 
             //destroy tracking when scope is destroyed
             if (scope) {
@@ -283,7 +283,7 @@
             return removeListener;
           };
 
-          feature.cleanup = cleanup;
+          feature.destroySteps = destroySteps;
         };
 
         /**
@@ -302,11 +302,11 @@
             return;
           }
 
-          feature.cleanup.forEach(function(removeListener) {
+          feature.destroySteps.forEach(function(removeListener) {
             removeListener();
           });
 
-          feature.cleanup = [];
+          feature.destroySteps = [];
           delete self[featureName];
         };
 

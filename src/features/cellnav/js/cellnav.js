@@ -557,9 +557,6 @@
               grid.cellNav.broadcastCellNav(rowCol);
             }
           });
-
-
-
         },
 
 
@@ -777,23 +774,34 @@
                 };
               }
 
+              function setupGrid() {
+                api = uiGridCellNavService.initializeGrid(grid);
+                setupCellNav();
+              }
+
+              function teardownGrid() {
+                uiGridCtrl.cellNav.clearFocus();
+                uiGridCellNavService.uninitializeGrid(grid, api);
+                delete uiGridCtrl.cellNav;
+                api = undefined;
+                _scope.$broadcast('uib.cellNavState', false);
+              }
+
               function updateGridState(state) {
                 if (state === undefined || state === 'true' && !api) {
-                  api = uiGridCellNavService.initializeGrid(grid);
-                  setupCellNav();
-                  _scope.$broadcast('uib.cellNavState', true);
+                  setupGrid();
                 } else if (api && state === 'false') {
-                  uiGridCtrl.cellNav.clearFocus();
-                  uiGridCellNavService.uninitializeGrid(grid, api);
-                  delete uiGridCtrl.cellNav;
-                  api = undefined;
-                  _scope.$broadcast('uib.cellNavState', false);
+                  teardownGrid();
                 }
               }
 
               $attrs.$observe('uiGridCellnav', function(value) {
                 updateGridState(value);
+                uiGridCtrl.grid.buildColumns().then(function() {
+                  _scope.$broadcast('uib.cellNavState', true);
+                });
               });
+
               updateGridState($attrs.uiGridCellnav);
             },
             post: function ($scope, $elm, $attrs, uiGridCtrl) {
@@ -1088,7 +1096,7 @@
                 }));
               }
 
-              function tearDownViewPort() {
+              function teardownViewPort() {
                 destroySteps.forEach(function (destroy) {
                   destroy();
                 });
@@ -1099,7 +1107,7 @@
                 if (state) {
                   setupViewPort();
                 } else {
-                  tearDownViewPort();
+                  teardownViewPort();
                 }
               }
               
@@ -1131,8 +1139,6 @@
         link: function ($scope, $elm, $attrs, controllers) {
           var uiGridCtrl = controllers[0],
               uiGridCellnavCtrl = controllers[1];
-
-          var dataChangeDereg;
           var destroySteps = [];
 
           function setupFeature() {
@@ -1147,7 +1153,7 @@
             // Make this cell focusable but only with javascript/a mouse click
             $elm.attr('tabindex', -1);
             destroySteps.push(function() {
-              $elm.removeAttribute('tabindex');
+              $elm.removeAttr('tabindex');
             });
 
             // When a cell is clicked, broadcast a cellNav event saying that this row+col combo is now focused
@@ -1215,13 +1221,13 @@
             destroySteps.push($scope.$on(uiGridCellNavConstants.CELL_NAV_EVENT, refreshCellFocus));
 
             // Refresh cell focus when a new row id added to the grid
-            dataChangeDereg = uiGridCtrl.grid.registerDataChangeCallback(function (grid) {
+            destroySteps.push(uiGridCtrl.grid.registerDataChangeCallback(function (grid) {
               // Clear the focus if it's set to avoid the wrong cell getting focused during
               // a short period of time (from now until $timeout function executed)
               clearFocus();
 
               $timeout(refreshCellFocus);
-            }, [uiGridConstants.dataChange.ROW]);
+            }, [uiGridConstants.dataChange.ROW]));
 
             function refreshCellFocus() {
               var isFocused = grid.cellNav.focusedCells.some(function (focusedRowCol, index) {
@@ -1255,17 +1261,13 @@
             }
 
             $scope.$on('$destroy', function () {
-              //.off withouth paramaters removes all handlers
-              $elm.find('div').off();
-              $elm.off();
+              destroySteps.forEach(function(destory) {
+                destory();
+              });
             });
           }
 
-          function tearDownFeature() {
-            if (dataChangeDereg) {
-              dataChangeDereg();
-            }
-
+          function teardownFeature() {
             destroySteps.forEach(function(destory) {
               destory();
             });
@@ -1277,7 +1279,7 @@
             if (state) {
               setupFeature();
             } else {
-              tearDownFeature();
+              teardownFeature();
             }
           }
           $scope.$on('uib.cellNavState', function(event, state) {
