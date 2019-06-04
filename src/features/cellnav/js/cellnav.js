@@ -869,6 +869,10 @@
                     }
                   }
 
+                  function getAppendedColumnHeaderText(col) {
+                    return col.displayName + ', ';
+                  }
+
                   function getCellDisplayValue(currentRowColumn) {
                     if (currentRowColumn.col.field === 'selectionRowHeaderCol') {
                       // This is the case when the 'selection' feature is used in the grid and the user has moved
@@ -884,7 +888,8 @@
                   var values = [];
                   var currentSelection = grid.api.cellNav.getCurrentSelection();
                   for (var i = 0; i < currentSelection.length; i++) {
-                    values.push(getCellDisplayValue(currentSelection[i]));
+                    var cellDisplayValue = getAppendedColumnHeaderText(currentSelection[i].col) + getCellDisplayValue(currentSelection[i]);
+                    values.push(cellDisplayValue)
                   }
                   var cellText = values.toString();
                   setNotifyText(cellText);
