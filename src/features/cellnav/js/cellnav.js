@@ -933,9 +933,7 @@
                 if (containerId !== 'body') {
                   return;
                 }
-  
-  
-  
+                
                 if (uiGridCtrl.grid.options.modifierKeysToMultiSelectCells){
                   $elm.attr('aria-multiselectable', true);
                 } else {
