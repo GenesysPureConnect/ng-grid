@@ -944,7 +944,7 @@
                 focuser = $compile('<div class="ui-grid-focuser" role="region" aria-live="assertive" aria-atomic="false" tabindex="0" aria-controls="' + grid.id +'-aria-speakable '+ grid.id + '-grid-container' +'" aria-owns="' + grid.id + '-grid-container' + '"></div>')($scope);
                 $elm.append(focuser);
   
-                focuser.on('focus', function (evt) {
+                focuser.on('focusin', function (evt) {
                   evt.uiGridTargetRenderContainerId = containerId;
                   var rowCol = uiGridCtrl.grid.api.cellNav.getFocusedCell();
                   if (rowCol === null) {
@@ -952,6 +952,16 @@
                     if (rowCol.row && rowCol.col) {
                       uiGridCtrl.cellNav.broadcastCellNav(rowCol);
                     }
+                  }
+                });
+
+                focuser.on('focusout', function(evt) {
+                  uiGridCtrl.cellNav.clearFocus();
+                });
+
+                $scope.$on(uiGridCellNavConstants.CELL_NAV_EVENT, function() {
+                  if (!focuser.is(':focus')) {
+                    focuser.focus();
                   }
                 });
   
@@ -1212,12 +1222,13 @@
             //You can only focus on elements with a tabindex value
             function handleFocus(evt) {
               uiGridCtrl.cellNav.broadcastCellNav(new GridRowColumn($scope.row, $scope.col), false, evt);
-              evt.stopPropagation();
+              evt.preventDefault();
               $scope.$apply();
             }
-            $elm.on('focus', handleFocus);
+
+            $elm.on('focusin', handleFocus);
             destroySteps.push(function() {
-              $elm.off('focus', handleFocus);
+              $elm.off('focusin', handleFocus);
             });
 
             // This event is fired for all cells.  If the cell matches, then focus is set
